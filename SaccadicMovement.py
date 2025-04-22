@@ -1,22 +1,43 @@
 import numpy as np
 import cv2
-import mss
 import matplotlib.pyplot as plt
-import time
 from brian2 import *
+import os
+from scipy.ndimage import zoom
+from sklearn.metrics import roc_auc_score
 
-# 1. Capture + Saliency
+# ========== 1. File Setup ==========
 
-def capture_screen_mss(resize_to=(192, 108)):
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]
-        screenshot = sct.grab(monitor)
-        img = np.array(screenshot)[:, :, :3]
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        if resize_to:
-            img = cv2.resize(img, resize_to)
-        return img
+stimuli_dir = 'C:/Users/ayaan/Downloads/ALLSTIMULI/ALLSTIMULI'
+fixmap_dir = 'C:/Users/ayaan/Downloads/ALLFIXATIONMAPS/ALLFIXATIONMAPS'
 
+# Use the correct filename for the stimulus (which ends in .jpeg)
+stim_filename = 'i05june05_static_street_boston_p1010764.jpeg'
+
+# Generate the corresponding fixation map name (which ends in _fixMap.jpg)
+base_name = os.path.splitext(stim_filename)[0]
+fix_filename = f"{base_name}_fixMap.jpg"
+
+# Full paths
+stim_path = os.path.join(stimuli_dir, stim_filename)
+fix_path = os.path.join(fixmap_dir, fix_filename)
+
+# Debug checks
+print("Stimulus Image Path:", stim_path)
+print("Fixation Map Path:", fix_path)
+print("Stimulus exists?", os.path.exists(stim_path))
+print("Fixation map exists?", os.path.exists(fix_path))
+
+# ========== 2. Load Stimulus Image ==========
+
+screen_img = cv2.imread(stim_path)
+if screen_img is None:
+    raise FileNotFoundError(f"Failed to load image: {stim_path}")
+
+screen_img = cv2.cvtColor(screen_img, cv2.COLOR_BGR2RGB)
+screen_img = cv2.resize(screen_img, (192, 108))
+
+# ========== 3. Compute Saliency ==========
 def compute_opencv_saliency(image):
     saliency = cv2.saliency.StaticSaliencySpectralResidual_create()
     success, saliency_map = saliency.computeSaliency(image)
@@ -34,8 +55,11 @@ def saliency_to_exc_input(saliency_map, grid_shape=(20, 20)):
     resized = cv2.resize(saliency_map, grid_shape)
     return resized.flatten()
 
-# 2. Brian2 Setup
+sal_map = compute_opencv_saliency(screen_img)
+filtered_sal_map = filter_saliency_map(sal_map)
+input_vector_base = saliency_to_exc_input(filtered_sal_map, grid_shape=(20, 20))
 
+# ========== 4. Brian2 Neuron Grid ==========
 nx, ny = 20, 20
 N = nx * ny
 Ee = 0 * mV
@@ -62,97 +86,59 @@ S_inhib.connect(condition='i != j')
 S_self = Synapses(G, G, on_pre='ge_post += 0.02')
 S_self.connect(condition='i == j')
 
-# 3. Preprocess Input
-
-screen_img = capture_screen_mss()
-sal_map = compute_opencv_saliency(screen_img)
-filtered_sal_map = filter_saliency_map(sal_map, threshold=0.2)
-input_vector_base = saliency_to_exc_input(filtered_sal_map, grid_shape=(nx, ny))
-
-# Mask specific neurons (0,0), (19,19), (18,19)
+# Mask corners
 input_vector_masked = input_vector_base.copy()
-omit_indices = [0 * nx + 0, 19 * nx + 19, 19 * nx + 18 ]
+omit_indices = [0 * nx + 0, 19 * nx + 19, 19 * nx + 18]
 for idx in omit_indices:
     input_vector_masked[idx] = 0
 
-resized_input_base = input_vector_masked.reshape((ny, nx))
+# ========== 5. Run Neuron Simulation ==========
+excitation = 2.5
+inhibition = 0.1
 
-# 4. Sweep Parameters
+S_inhib.w[:] = inhibition
+G.v = v_rest + (5 * mV) * np.random.rand(N)
+G.ge = 0
+G.gi = 0
+G.ge = input_vector_masked * excitation
 
-excitation_values = np.arange(1.5, 3.51, 0.25)
-inhibition_values = np.linspace(0.05, 0.25, 8)
-combined_heatmap = np.zeros((ny, nx), dtype=int)
-trigger_counts = np.zeros((len(inhibition_values), len(excitation_values)))
+spikemon = SpikeMonitor(G)
+run(300 * ms)
 
-for inhib_idx, inhib in enumerate(inhibition_values):
-    S_inhib.w[:] = inhib
+spike_counts = np.bincount(spikemon.i, minlength=N)
+combined_heatmap = spike_counts.reshape((ny, nx))
 
-    for exc_idx, excitation in enumerate(excitation_values):
-        print(f"\nInhibition: {inhib:.2f}, Excitation: {excitation:.2f}")
+# ========== 6. Load Fixation Map ==========
+fixation_map = cv2.imread(fix_path, cv2.IMREAD_GRAYSCALE)
+fixation_map = cv2.resize(fixation_map, (nx, ny)) / 255.0
 
-        G.v = v_rest + (5 * mV) * np.random.rand(N)
-        G.ge = 0
-        G.gi = 0
-        G.ge = input_vector_masked * excitation  # <== Using masked input
+# ========== 7. Evaluate (AUC) ==========
+if combined_heatmap.max() > 0:
+    model_output = combined_heatmap / np.max(combined_heatmap)
+else:
+    model_output = combined_heatmap.astype(np.float32)
 
-        spikemon = SpikeMonitor(G)
-        run(300 * ms)
+# Flatten both
+flat_model = model_output.flatten()
+flat_fix = fixation_map.flatten()
+binary_fix = (flat_fix > 0.5).astype(np.uint8)
 
-        spike_counts = np.bincount(spikemon.i, minlength=N)
-        trigger_counts[inhib_idx, exc_idx] = np.sum(spike_counts)
+auc = roc_auc_score(binary_fix, flat_model)
+print(f"AUC Score: {auc:.4f}")
 
-        if np.sum(spike_counts) > 0:
-            winner = np.argmax(spike_counts)
-            x, y = winner % nx, winner // nx
-            combined_heatmap[y, x] += 1
-            print(f"  Winner neuron: ({x}, {y}) | Spikes: {spike_counts[winner]}")
-        else:
-            print("  No neurons fired.")
+# ========== 8. Visualize ==========
+fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+axs[0].imshow(screen_img)
+axs[0].set_title("Stimulus")
 
-# 5. Plot Figure 1 (Neuron Input & Heatmaps)
+axs[1].imshow(fixation_map, cmap='hot')
+axs[1].set_title("Ground Truth Fixation Map")
 
-fig, axs = plt.subplots(2, 2, figsize=(14, 10))
+axs[2].imshow(model_output, cmap='hot')
+axs[2].set_title("Model Output Heatmap")
 
-axs[0][0].imshow(screen_img)
-axs[0][0].set_title("Screen Capture")
-axs[0][0].axis("off")
-
-axs[0][1].imshow(resized_input_base, cmap='hot', interpolation='nearest')
-axs[0][1].set_title("Neuron Input (Filtered Saliency)")
-axs[0][1].set_xlabel("Neuron X")
-axs[0][1].set_ylabel("Neuron Y")
-fig.colorbar(axs[0][1].images[0], ax=axs[0][1], fraction=0.046, pad=0.04).set_label("Intensity")
-
-axs[1][0].imshow(filtered_sal_map, cmap='hot', interpolation='nearest')
-axs[1][0].set_title("Filtered Saliency Map")
-axs[1][0].set_xlabel("Pixel X")
-axs[1][0].set_ylabel("Pixel Y")
-fig.colorbar(axs[1][0].images[0], ax=axs[1][0], fraction=0.046, pad=0.04).set_label("Intensity")
-
-axs[1][1].imshow(combined_heatmap, cmap='hot', interpolation='nearest')
-axs[1][1].set_title("Cumulative Winner Neuron Heatmap")
-axs[1][1].set_xlabel("Neuron X")
-axs[1][1].set_ylabel("Neuron Y")
-fig.colorbar(axs[1][1].images[0], ax=axs[1][1], fraction=0.046, pad=0.04).set_label("Wins")
-
-plt.tight_layout()
-plt.show()
-
-# 6. Plot Figure 2 (Parameter Heatmap)
-
-plt.figure(figsize=(10, 8))
-im = plt.imshow(trigger_counts, cmap='hot', interpolation='nearest',
-                extent=[excitation_values[0], excitation_values[-1],
-                        inhibition_values[-1], inhibition_values[0]],
-                aspect='auto')
-
-plt.title("Total Spikes by Excitation and Inhibition")
-plt.xlabel("Excitation Scaling")
-plt.ylabel("Inhibition Strength")
-plt.xticks(excitation_values, rotation=45)
-plt.yticks(inhibition_values)
-cbar = plt.colorbar(im, fraction=0.025, pad=0.04)
-cbar.set_label("Total Spikes")
+for ax in axs:
+    ax.axis("off")
 
 plt.tight_layout()
 plt.show()
