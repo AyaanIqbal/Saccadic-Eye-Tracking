@@ -79,6 +79,7 @@ for stim_filename in selected_files:
     best_inh = 0
     best_nss = -1
 
+    # Parameter Sweep
     for inh_idx, inhibition in enumerate(inhibition_values):
         for exc_idx, excitation in enumerate(excitation_values):
             N = nx * ny
@@ -108,6 +109,7 @@ for stim_filename in selected_files:
             flat_model = model_output.flatten()
 
             try:
+                # Find best AUC and NSS
                 auc = roc_auc_score(binary_fix, flat_model)
                 nss = compute_nss(model_output, fixation_map)
                 auc_accumulator[inh_idx, exc_idx] += auc
@@ -120,6 +122,7 @@ for stim_filename in selected_files:
             except:
                 continue
 
+    # Plot Figures
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
     axs[0].imshow(screen_img)
     axs[0].set_title(f"Stimulus: {stim_filename}")
@@ -138,7 +141,7 @@ for stim_filename in selected_files:
 
     image_count += 1
 
-# ======= Final Heatmap of Average AUC =======
+# AUC Heatmap
 average_auc = auc_accumulator / image_count
 fig, ax = plt.subplots(figsize=(10, 7))
 cax = ax.imshow(average_auc, cmap='hot', interpolation='nearest', aspect='auto',
