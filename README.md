@@ -70,7 +70,7 @@ This script runs the full pipeline on a small sample of 5 random images from the
 - Evaluate results against ground truth fixation data using AUC and NSS metrics
 - Display all images, spike heatmaps, and metric scores for inspection
 
-##Full Parameter Sweep
+## Full Parameter Sweep
 ```bash
 python heatmap_plotter.py
 ```
@@ -93,3 +93,4 @@ This project was developed as part of a research initiative for the SYDE 552 –
 
 - MIT1003 Eye-Tracking Dataset  
 - Ground truth fixation maps from [MIT Saliency Benchmark](http://saliency.mit.edu/datasets.html)
+
