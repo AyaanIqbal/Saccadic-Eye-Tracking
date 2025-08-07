@@ -82,15 +82,19 @@ This script performs a parameter sweep to analyze model performance across diffe
 
 ## Citation & Acknowledgments
 
-This project was developed as part of a research initiative for the SYDE 552 – Computational Neuroscience course at the University of Waterloo. The research paper details the model design, biological motivation, and evaluation results.
+This project was developed as part of a research initiative for the SYDE 552 – Computational Neuroscience course at the University of Waterloo.  
+The [research paper (PDF)](docs/SYDE%20552%20Final%20Project.pdf) details the model design, biological motivation, and evaluation results.
 
 > **SYDE 552 – Computational Neuroscience**  
 > Instructor: **Prof. Terrence C. Stewart**, University of Waterloo  
 > Project Title: _Modeling Visual Salience with Excitation-Inhibition Dynamics: A Bottom-Up Approach to Gaze Prediction_  
-> Authors: Ayaan Iqbal, Mekhael Thaha
+> Authors: **Ayaan Iqbal, Mekhael Thaha**
+
+
 
 **Dataset**
 
 - MIT1003 Eye-Tracking Dataset  
 - Ground truth fixation maps from [MIT Saliency Benchmark](http://saliency.mit.edu/datasets.html)
+
 
